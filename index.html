@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 安全日志智能分析系统 (SOC Multi-Agent)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
+        .markdown-body { line-height: 1.6; color: #333; }
+        .markdown-body h1 { font-size: 2em; font-weight: bold; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.3em; margin-top: 24px; }
+        .markdown-body h2 { font-size: 1.5em; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; margin-top: 20px; }
+        .markdown-body pre { background-color: #0d1117; padding: 16px; border-radius: 6px; overflow-x: auto; }
+        .markdown-body code { font-family: 'Consolas', 'Monaco', monospace; background-color: rgba(175,184,193,0.2); padding: 0.2em 0.4em; border-radius: 6px; }
+        .markdown-body pre code { background-color: transparent; padding: 0; color: #c9d1d9; }
+        .markdown-body table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+        .markdown-body th, .markdown-body td { border: 1px solid #dfe2e5; padding: 8px 12px; text-align: left; }
+        .markdown-body th { background-color: #f6f8fa; font-weight: bold; }
+        .markdown-body blockquote { border-left: 4px solid #dfe2e5; padding-left: 16px; color: #6a737d; margin: 16px 0; }
+        
+        /* 加载动画 */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+
+    <!-- 顶部导航 -->
+    <header class="bg-blue-600 text-white shadow-lg">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold">🛡️ AI 安全日志智能分析系统</h1>
+            <span class="text-sm bg-blue-700 px-3 py-1 rounded-full">SOC Multi-Agent 版</span>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="container mx-auto px-6 py-8 flex-grow">
+        
+        <!-- 上传区域 -->
+        <div class="bg-white rounded-lg shadow-md p-8 mb-8">
+            <h2 class="text-xl font-semibold mb-4 text-gray-800">📤 上传日志文件</h2>
+            <p class="text-gray-600 mb-4 text-sm">支持 .log, .txt 格式。系统将自动启动多智能体团队进行深度分析。</p>
+            
+            <div class="flex items-center space-x-4">
+                <input type="file" id="fileInput" class="block w-full text-sm text-gray-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-full file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-blue-50 file:text-blue-700
+                    hover:file:bg-blue-100
+                "/>
+                <button onclick="startAnalysis()" id="analyzeBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded transition duration-200">
+                    🚀 开始 SOC 分析
+                </button>
+            </div>
+            <p id="fileInfo" class="mt-2 text-sm text-gray-500"></p>
+        </div>
+
+        <!-- 进度与状态区域 -->
+        <div id="statusContainer" class="hidden bg-white rounded-lg shadow-md p-8 mb-8 text-center">
+            <h3 class="text-lg font-medium text-gray-700 mb-2">正在分析中...</h3>
+            <div class="loader"></div>
+            <p id="statusText" class="text-blue-600 font-medium">正在组建智能体团队...</p>
+            <div class="w-full bg-gray-200 rounded-full h-2.5 mt-4">
+                <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+            </div>
+            <p id="progressDetail" class="text-xs text-gray-500 mt-2">0%</p>
+        </div>
+
+        <!-- 结果展示区域 -->
+        <div id="resultContainer" class="hidden bg-white rounded-lg shadow-md p-8 mb-8">
+            <div class="flex justify-between items-center mb-6 border-b pb-4">
+                <h2 class="text-2xl font-bold text-gray-800">📊 分析报告</h2>
+                <div id="actionButtons" class="space-x-3">
+                    <!-- 下载按钮将在这里动态生成 -->
+                </div>
+            </div>
+            
+            <div id="reportContent" class="markdown-body text-sm">
+                <!-- 报告内容将渲染在这里 -->
+            </div>
+        </div>
+
+        <!-- 错误提示 -->
+        <div id="errorContainer" class="hidden bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-md mb-8" role="alert">
+            <p class="font-bold">❌ 分析失败</p>
+            <p id="errorMessage"></p>
+        </div>
+
+    </main>
+
+    <footer class="bg-gray-800 text-gray-400 text-center py-6">
+        <p>&copy; 2024 AI SOC Analyzer. Powered by CrewAI & DashScope.</p>
+    </footer>
+
+    <script>
+        let currentTaskId = null;
+        let pollInterval = null;
+
+        // 监听文件选择
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('fileInfo').textContent = `已选择: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+            } else {
+                document.getElementById('fileInfo').textContent = '';
+            }
+        });
+
+        async function startAnalysis() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                alert("请先选择一个日志文件！");
+                return;
+            }
+
+            // 重置界面
+            resetUI();
+            document.getElementById('statusContainer').classList.remove('hidden');
+            document.getElementById('analyzeBtn').disabled = true;
+            document.getElementById('analyzeBtn').classList.add('opacity-50', 'cursor-not-allowed');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                // 1. 提交任务
+                const response = await fetch('/analyze_soc', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`提交失败: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                currentTaskId = data.task_id;
+                console.log("任务已提交:", currentTaskId);
+
+                // 2. 开始轮询状态
+                pollStatus(currentTaskId);
+
+            } catch (error) {
+                showError(error.message);
+                resetButtonState();
+            }
+        }
+
+        function pollStatus(taskId) {
+            if (pollInterval) clearInterval(pollInterval);
+
+            pollInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/status/${taskId}`);
+                    if (!res.ok) throw new Error("无法获取状态");
+                    
+                    const data = await res.json();
+                    
+                    // 更新进度条
+                    updateProgress(data.progress_percent, data.progress_msg || data.stage);
+
+                    if (data.status === 'completed') {
+                        // ✅ 任务完成
+                        clearInterval(pollInterval);
+                        showResult(data);
+                        resetButtonState();
+                    } else if (data.status === 'failed') {
+                        // ❌ 任务失败
+                        clearInterval(pollInterval);
+                        showError(data.error || "未知错误");
+                        resetButtonState();
+                    }
+                    // 其他状态继续轮询
+
+                } catch (error) {
+                    console.error("轮询出错:", error);
+                    // 不中断轮询，偶尔的网络波动可忽略，或者尝试重试
+                }
+            }, 2000); // 每 2 秒轮询一次
+        }
+
+        function updateProgress(percent, message) {
+            const bar = document.getElementById('progressBar');
+            const detail = document.getElementById('progressDetail');
+            const statusText = document.getElementById('statusText');
+
+            bar.style.width = `${percent}%`;
+            detail.textContent = `${percent}%`;
+            if (message) {
+                statusText.textContent = message;
+            }
+        }
+
+        function showResult(data) {
+            document.getElementById('statusContainer').classList.add('hidden');
+            const resultContainer = document.getElementById('resultContainer');
+            resultContainer.classList.remove('hidden');
+
+            const reportDiv = document.getElementById('reportContent');
+            
+            // 渲染 Markdown
+            if (data.result) {
+                reportDiv.innerHTML = marked.parse(data.result);
+                // 激活代码高亮
+                document.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+            } else {
+                reportDiv.innerHTML = "<p class='text-gray-500'>报告内容为空，但任务状态显示已完成。</p>";
+            }
+
+            // ✅ 生成下载按钮
+            const actionDiv = document.getElementById('actionButtons');
+            actionDiv.innerHTML = ''; // 清空旧按钮
+
+            if (data.download_url) {
+                const downloadLink = document.createElement('a');
+                downloadLink.href = data.download_url;
+                downloadLink.className = "inline-flex items-center bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition duration-200 shadow";
+                downloadLink.target = "_blank"; // 在新标签页打开或直接下载
+                downloadLink.innerHTML = `
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    下载报告 (.md)
+                `;
+                actionDiv.appendChild(downloadLink);
+            }
+            
+            // 滚动到结果区
+            resultContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showError(msg) {
+            document.getElementById('statusContainer').classList.add('hidden');
+            const errorContainer = document.getElementById('errorContainer');
+            errorContainer.classList.remove('hidden');
+            document.getElementById('errorMessage').textContent = msg;
+            errorContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function resetUI() {
+            document.getElementById('resultContainer').classList.add('hidden');
+            document.getElementById('errorContainer').classList.add('hidden');
+            document.getElementById('reportContent').innerHTML = '';
+            document.getElementById('actionButtons').innerHTML = '';
+            updateProgress(0, "准备启动...");
+        }
+
+        function resetButtonState() {
+            const btn = document.getElementById('analyzeBtn');
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+    </script>
+</body>
+</html>

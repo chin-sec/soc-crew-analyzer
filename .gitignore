@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+agent-env/
+venv/
+ENV/
+env/
+
+# Environment variables (IMPORTANT: Do not upload keys!)
+.env
+
+# Logs and Data (Keep these local)
+logs/*.log
+uploads/*
+reports/*
+chroma_db/
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 忽略所有 ChromaDB 备份目录
+chroma_db_backup_*/
+
+# 忽略 data 目录下的所有上传文件和原始日志
+data/uploads/
+data/*.log
+data/*.txt
+
+# 忽略所有 uploads 目录 (以防万一)
+uploads/
+
+# 忽略 reports 和 logs 目录
+reports/
+logs/
+
+# 忽略 chroma_db 主目录
+chroma_db/
+data/*.py

@@ -1,0 +1,13 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+agent-env
+uploads/*
+reports/*
+logs/*
+chroma_db
+*.log
+.DS_Store

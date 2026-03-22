@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  soc-agent:
+    build: .
+    container_name: soc-analyzer-v2
+    ports:
+      - "8000:8000"
+    volumes:
+      # 挂载数据目录，防止容器删除后数据丢失
+      - ./uploads:/app/uploads
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./chroma_db:/app/chroma_db
+    environment:
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - MODEL_NAME=${MODEL_NAME:-qwen-plus}
+    restart: unless-stopped
+    # 如果内存有限，可以限制资源
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 2G
