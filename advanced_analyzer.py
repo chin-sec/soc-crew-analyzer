@@ -1,229 +1,262 @@
 import os
 import re
-import time
+import json
 import logging
-from typing import List, Dict, Any, Callable, Optional
+from typing import List, Dict, Any, Optional, Tuple, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from dotenv import load_dotenv
+from config import CHUNK_SIZE, MAX_THREADS, CHUNK_OVERLAP
+from llm_client import call_llm
+from log_stats import generate_log_stats, extract_iocs
 
-load_dotenv()
-
-try:
-    import tiktoken
-    TOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")
-    USE_TIKTOKEN = True
-except ImportError:
-    USE_TIKTOKEN = False
-    logging.warning("⚠️ tiktoken 未安装")
-
-from simple_analyzer import call_llm
-try:
-    from rag_engine import rag_engine
-    RAG_ENABLED = True
-except ImportError:
-    RAG_ENABLED = False
-
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8")) # 增加默认线程数
-CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "2000"))
-
-class AdvancedLogAnalyzer:
-    def __init__(self):
-        if USE_TIKTOKEN:
-            logger.info(f"✅ Token 编码器已加载")
-        logger.info(f"⚙️  配置：并行线程={MAX_WORKERS}, 切片大小={CHUNK_TOKENS}")
-
-    def _count_tokens(self, text: str) -> int:
-        if USE_TIKTOKEN:
-            return len(TOKEN_ENCODER.encode(text))
-        return len(text) // 4
-
-    def hybrid_preprocess(self, text: str) -> Dict[str, Any]:
-        lines = text.splitlines()
-        ip_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
-        stats = {
-            "total_lines": len(lines),
-            "unique_ip_count": len(set(ip_pattern.findall(text))),
-            "top_ips": list(set(ip_pattern.findall(text)))[:10],
-            "ssh_fails": len(re.findall(r"Failed password|Invalid user", text, re.IGNORECASE)),
-            "sql_attempts": len(re.findall(r"union\s+select|or\s+1\s*=\s*1", text, re.IGNORECASE)),
-            "http_4xx": len(re.findall(r"\s4\d{2}\s", text)),
-            "http_5xx": len(re.findall(r"\s5\d{2}\s", text)),
-        }
-        return stats
-
-    def split_logs(self, text: str) -> List[Dict[str, Any]]:
-        """
-        【优化】返回带元数据的字典列表，方便后续直接使用
-        """
-        lines = text.splitlines()
-        chunks = []
-        current_chunk_lines = []
-        current_tokens = 0
-        
-        for line in lines:
-            line_tokens = self._count_tokens(line)
-            if current_tokens + line_tokens > CHUNK_TOKENS and current_chunk_lines:
-                chunk_text = "\n".join(current_chunk_lines)
-                chunks.append({
-                    "text": chunk_text,
-                    "metadata": {"lines_count": len(current_chunk_lines)}
-                })
-                current_chunk_lines = [line]
-                current_tokens = line_tokens
-            else:
-                current_chunk_lines.append(line)
-                current_tokens += line_tokens
-        
-        if current_chunk_lines:
-            chunks.append({
-                "text": "\n".join(current_chunk_lines),
-                "metadata": {"lines_count": len(current_chunk_lines)}
-            })
-        return chunks
-
-    def _is_safe_chunk(self, chunk_text: str) -> bool:
-        """
-        【优化】轻量级预过滤
-        如果 chunk 中没有任何潜在威胁特征，直接跳过 LLM 分析，节省 Token
-        """
-        # 定义一些明显的“安全”特征，如果只有这些，可以跳过
-        # 注意：这里逻辑是反的，如果有“危险”特征才返回 False (需要分析)
-        # 或者：如果全是“安全”特征且无“危险”特征，返回 True (跳过)
-        
-        danger_patterns = [
-            r"Failed password", r"Invalid user", r"error", r"exception", 
-            r"union\s+select", r"select\s+.*\s+from", r"../", r"<script>",
-            r"4\d{2}", r"5\d{2}", r"POST.*\.php", r"cmd=", r"exec="
-        ]
-        
-        for pattern in danger_patterns:
-            if re.search(pattern, chunk_text, re.IGNORECASE):
-                return False # 发现危险特征，需要分析
-        
-        # 如果没有危险特征，且主要是正常的 GET 200，可以跳过
-        # 这里为了保险，只要没发现明显危险，我们也可以选择不跳过，或者只跳过纯静态资源访问
-        # 激进优化：如果没有任何匹配，直接跳过
-        return True
-
-    def _analyze_single_chunk(self, idx: int, chunk_data: Dict, stats: Dict, skip_analysis: bool = False) -> Optional[str]:
-        chunk_text = chunk_data['text']
-        
-        if skip_analysis:
-            # 如果预过滤判定安全，直接返回空或简短标记，不消耗 Token
-            return None 
-
-        stats_summary = f"全局：{stats['unique_ip_count']} IPs, {stats['ssh_fails']} SSH fails"
-        prompt = f"""
-        【背景】{stats_summary}
-        【片段 {idx+1}】
-        {chunk_text}
-        
-        任务：识别具体攻击 (IP, 类型，证据)。若无威胁回复"无"。
-        """
-        
+# ---------- 正则预检（增强版）----------
+def _is_suspicious_chunk(chunk_content: str) -> Tuple[bool, str]:
+    """混合预检：返回 (是否可疑, 攻击类型)"""
+    def safe_search(pattern, text):
         try:
-            res = call_llm(prompt, system_prompt="你是安全分析师，只输出关键威胁点。")
-            if "无" in res and len(res) < 20: # 简单的后过滤
-                return None
-            return f"--- 片段 {idx+1} ---\n{res}"
-        except Exception as e:
-            logger.error(f"❌ 片段 {idx+1} 失败：{e}")
-            return f"--- 片段 {idx+1} ---\nError: {str(e)}"
+            return re.search(pattern, text, re.IGNORECASE)
+        except re.error:
+            return None
 
-    def map_analyze(self, chunks: List[Dict], stats: Dict, progress_callback: Callable) -> List[str]:
-        logger.info(f"🚀 开始并行分析 ({MAX_WORKERS} 线程)...")
-        results = [None] * len(chunks)
-        done = 0
-        total = len(chunks)
-        
-        # 预计算哪些需要分析
-        tasks = []
-        for i, c in enumerate(chunks):
-            skip = self._is_safe_chunk(c['text'])
-            tasks.append((i, c, skip))
-        
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {
-                executor.submit(self._analyze_single_chunk, i, c, stats, skip): i 
-                for i, c, skip in tasks
-            }
-            
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    results[idx] = future.result()
-                except Exception as e:
-                    logger.error(f"任务异常：{e}")
-                
-                done += 1
-                if progress_callback:
-                    # 更新 Map 进度
-                    progress_callback("analyzing", done, total, f"分析片段: {done}/{total}")
-                    
-        return [r for r in results if r is not None]
+    # SQL 注入特征
+    sql_patterns = [
+        r"(?i)(union\s+all\s+select|union\s+select)",
+        r"(?i)(select\s+.*?\s+from\s+.*?information_schema)",
+        r"(?i)(sleep\s*\(\s*\d+\s*\)|benchmark\s*\()",
+        r"(?i)(\s+or\s+[\d\']+[=<>][\d\']+\s+)",
+        r"(?i)(drop\s+table|delete\s+from|insert\s+into|xp_cmdshell)",
+        r"(?i)(%27|')\s*.*\s*(%23|--|/\*)",
+        r"(?i)(%60|`)\s*.*\s*(%23|--|/\*)",
+    ]
+    # XSS & 路径遍历
+    xss_patterns = [
+        r"<script[^>]*>", r"</script>", r"javascript\s*:",
+        r"onload\s*=|onerror\s*=|onclick\s*=",
+        r"(\.\./|\.\.%2f)+", r"\.git/config", r"etc/passwd",
+    ]
+    # RCE & 命令注入
+    rce_patterns = [
+        r";ls\s+\-la", r";cat\s+", r";id\s*",
+        r"(%3B|;)(wget|curl|nc|netcat)",
+        r"(%7C|\|)\s*(wget|curl)",
+        r"(%24\{|\$\().*?(\$\)|\))",
+        r"base64\s+\-\w*\s+\S+",
+    ]
+    scanner_patterns = [r"sqlmap", r"nikto", r"burp", r"acunetix", r"nessus"]
+    webshell_patterns = [
+        r"eval\s*\(\s*\$_(POST|GET|REQUEST)",
+        r"assert\s*\(\s*\$_",
+        r"system\s*\(\s*\$_",
+        r"exec\s*\(\s*\$_",
+        r"cmd\s*=\s*",
+    ]
 
-    def reduce_reports(self, sub_reports: List[str]) -> str:
-        if not sub_reports:
-            return "✅ 经详细分析，未发现明显攻击行为 (或所有片段均被预过滤判定为安全)。"
-            
-        combined = "\n\n".join(sub_reports)
-        prompt = f"""
-        以下是多个日志片段的分析结果：
-        {combined}
-        
-        任务: 去重、关联攻击链，生成 Markdown 报告 (🛑高危摘要，📊IP 黑名单，🛡️防御建议)。
-        """
-        return call_llm(prompt, system_prompt="你是首席安全官 (CSO)。")
+    for p in sql_patterns:
+        if safe_search(p, chunk_content):
+            return True, "SQL注入"
+    for p in xss_patterns:
+        if safe_search(p, chunk_content):
+            return True, "XSS或路径遍历"
+    for p in rce_patterns:
+        if safe_search(p, chunk_content):
+            return True, "命令注入/RCE"
+    for p in scanner_patterns:
+        if safe_search(p, chunk_content):
+            return True, "扫描器行为"
+    for p in webshell_patterns:
+        if safe_search(p, chunk_content):
+            return True, "WebShell特征"
 
-    def analyze(self, full_text: str, file_id: str, progress_callback: Callable = None) -> str:
-        start = datetime.now()
-        logger.info("="*30 + "\n🚀 启动高级分析流水线\n" + "="*30)
-        
-        # 1. 预处理
-        if progress_callback: progress_callback("preprocessing", 0, 100, "正在预处理统计...")
-        stats = self.hybrid_preprocess(full_text)
-        
-        # 2. 分块
-        if progress_callback: progress_callback("splitting", 0, 100, "正在智能分块...")
-        chunks = self.split_logs(full_text)
-        logger.info(f"✅ 切分完成：{len(chunks)} 个块")
-        
-        # 3. RAG 索引 (并发优化版)
-        if RAG_ENABLED and chunks:
-            if progress_callback: progress_callback("indexing", 0, len(chunks), "正在建立向量索引 (并发中)...")
-            
-            def rag_progress_cb(current, total, msg):
-                if progress_callback:
-                    progress_callback("indexing", current, total, f"{msg} {current}/{total}")
-            
-            try:
-                rag_engine.ingest_chunks(file_id, chunks, progress_callback=rag_progress_cb)
-                logger.info(f"✅ [RAG] 索引完成")
-            except Exception as e:
-                logger.error(f"❌ [RAG] 索引失败：{e}")
-        
-        # 4. Map (带预过滤)
-        if progress_callback: progress_callback("analyzing", 0, len(chunks), "正在并行分析 (预过滤中)...")
-        
-        if len(chunks) == 1:
-            sub_reports = [self._analyze_single_chunk(0, chunks[0], stats)]
-        else:
-            sub_reports = self.map_analyze(chunks, stats, progress_callback)
-            
-        # 5. Reduce
-        if progress_callback: progress_callback("reducing", 0, 100, "正在汇总生成报告...")
-        report = self.reduce_reports(sub_reports)
-        
-        duration = (datetime.now() - start).total_seconds()
-        logger.info(f"🎉 完成！耗时：{duration:.2f}s")
-        if progress_callback: progress_callback("completed", 100, 100, f"分析完成! 耗时 {duration:.1f}s")
-        
-        return report
+    return False, "正常"
 
-def analyze_large_log(log_text: str, file_id: str, progress_callback: Callable = None) -> str:
-    analyzer = AdvancedLogAnalyzer()
-    return analyzer.analyze(log_text, file_id, progress_callback)
+# ---------- 分块 ----------
+def split_logs(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[Dict[str, Any]]:
+    lines = text.split('\n')
+    if not lines:
+        return []
+    chunks = []
+    start = 0
+    while start < len(lines):
+        end = start
+        current_length = 0
+        while end < len(lines) and current_length < chunk_size:
+            current_length += len(lines[end]) + 1
+            end += 1
+        chunk_content = "\n".join(lines[start:end])
+        if len(chunk_content) > chunk_size * 10:
+            chunk_content = chunk_content[:chunk_size]
+        chunks.append({
+            "id": len(chunks),
+            "content": chunk_content,
+            "start_line": start,
+            "end_line": end,
+        })
+        start = end - overlap if end - overlap > start else end
+    return chunks
+
+# ---------- 核心分析函数（调用 LLM，返回结构化结果）----------
+def analyze_chunk(chunk: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    返回结构化结果：{'attack_type': str, 'confidence': str, 'evidence': str, 'chunk_id': int}
+    若无可疑或 LLM 失败，返回 None
+    """
+    is_suspicious, reason = _is_suspicious_chunk(chunk['content'])
+    if not is_suspicious:
+        return None
+
+    # 重要：必须包含日志内容
+    prompt = f"""你是一名网络安全专家。请判断以下日志片段是否为真实攻击，并按 JSON 格式输出。
+正则预检提示：{reason}
+
+日志片段（第 {chunk['start_line']}-{chunk['end_line']} 行）：
+
+请严格输出以下 JSON 格式（不要输出其他内容）：
+{{
+    "attack_type": "攻击类型，如 SQL注入 / XSS / 命令注入 / 扫描器 / Webshell / 正常流量",
+    "confidence": "高/中/低",
+    "evidence": "简要证据描述"
+}}
+如果判断为正常流量，attack_type 写 "正常流量"，confidence 写 "无"，evidence 写 "无异常"。
+"""
+    try:
+        # 使用 JSON Mode 提高解析成功率
+        response = call_llm(prompt, response_format="json_object")
+        response = response.strip()
+        # 去除可能的 markdown 代码块标记
+        if response.startswith("```json"):
+            response = response[7:]
+        if response.startswith("```"):
+            response = response[3:]
+        if response.endswith("```"):
+            response = response[:-3]
+        result = json.loads(response.strip())
+        
+        if result.get("attack_type") == "正常流量":
+            return None
+        
+        return {
+            "chunk_id": chunk['id'],
+            "attack_type": result.get("attack_type", "未知"),
+            "confidence": result.get("confidence", "中"),
+            "evidence": result.get("evidence", "")[:200]
+        }
+    except Exception as e:
+        logger.error(f"块 {chunk['id']} LLM 分析失败: {e}, 响应: {response if 'response' in locals() else '无'}")
+        return None
+
+# ---------- 汇总报告（生成专业 SOC 报告）----------
+def reduce_reports(findings: List[Dict[str, Any]], log_stats: str, iocs: Dict[str, List[str]]) -> str:
+    if not findings:
+        return f"""# 🔒 安全日志分析报告
+
+## 📋 概览
+{log_stats}
+
+## ✅ 分析结论
+未发现明确的安全威胁。日志流量表现正常。
+
+---
+*报告生成时间：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+    
+    attack_counter = {}
+    for f in findings:
+        atype = f['attack_type']
+        attack_counter[atype] = attack_counter.get(atype, 0) + 1
+    
+    report_lines = []
+    report_lines.append("# 🛡️ SOC 安全分析报告")
+    report_lines.append("")
+    report_lines.append(f"**生成时间**: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report_lines.append("")
+    report_lines.append("## 📊 日志概览")
+    report_lines.append(log_stats)
+    report_lines.append("")
+    
+    report_lines.append("## 🔥 威胁摘要")
+    report_lines.append(f"共检测到 **{len(findings)}** 个可疑事件，涉及 **{len(attack_counter)}** 种攻击类型。")
+    report_lines.append("")
+    report_lines.append("### 攻击类型分布")
+    report_lines.append("| 攻击类型 | 发生次数 |")
+    report_lines.append("|---------|---------|")
+    for atype, count in sorted(attack_counter.items(), key=lambda x: x[1], reverse=True):
+        report_lines.append(f"| {atype} | {count} |")
+    report_lines.append("")
+    
+    report_lines.append("## 🧾 详细威胁事件")
+    report_lines.append("| 块ID | 攻击类型 | 置信度 | 证据 |")
+    report_lines.append("|------|---------|--------|------|")
+    for f in findings[:20]:
+        report_lines.append(f"| {f['chunk_id']} | {f['attack_type']} | {f['confidence']} | {f['evidence'][:60]} |")
+    if len(findings) > 20:
+        report_lines.append(f"| ... | 共 {len(findings)} 条，仅展示前20条 | ... | ... |")
+    report_lines.append("")
+    
+    if iocs.get("ips") or iocs.get("urls"):
+        report_lines.append("## 🌐 威胁情报指标 (IOC)")
+        if iocs.get("ips"):
+            report_lines.append("### 可疑 IP 地址")
+            for ip in iocs["ips"][:10]:
+                report_lines.append(f"- `{ip}`")
+        if iocs.get("urls"):
+            report_lines.append("### 可疑 URL")
+            for url in iocs["urls"][:10]:
+                report_lines.append(f"- `{url}`")
+        report_lines.append("")
+    
+    report_lines.append("## 🛠️ 处置建议")
+    if "SQL注入" in attack_counter:
+        report_lines.append("- **SQL注入**: 建议部署 WAF 规则，对输入进行严格过滤，升级数据库访问权限。")
+    if "XSS或路径遍历" in attack_counter:
+        report_lines.append("- **XSS/路径遍历**: 对输出进行编码，限制目录访问权限，禁用危险函数。")
+    if "命令注入/RCE" in attack_counter:
+        report_lines.append("- **命令注入**: 避免使用系统命令调用，使用安全的 API 替代，严格校验输入。")
+    if "扫描器行为" in attack_counter:
+        report_lines.append("- **扫描器**: 建议启用 IDS/IPS，封锁恶意源 IP，加强访问控制。")
+    if "WebShell特征" in attack_counter:
+        report_lines.append("- **WebShell**: 立即隔离受影响主机，检查文件完整性，排查后门。")
+    if not any(k in attack_counter for k in ["SQL注入", "XSS或路径遍历", "命令注入/RCE", "扫描器行为", "WebShell特征"]):
+        report_lines.append("- 建议持续监控，确保日志记录完整，定期审计安全策略。")
+    report_lines.append("")
+    
+    report_lines.append("---")
+    report_lines.append("*本报告由 AI 安全日志分析系统自动生成，仅供参考。请结合人工研判确认。*")
+    
+    return "\n".join(report_lines)
+
+# ---------- 主入口（支持进度回调）----------
+def analyze_logs(log_content: str, log_source: str = "unknown", progress_callback: Optional[Callable] = None) -> str:
+    if not log_content:
+        return "日志内容为空。"
+
+    total_steps = 5
+    if progress_callback:
+        progress_callback("Stats", 1, total_steps, "正在生成日志统计...")
+    
+    log_stats = generate_log_stats(log_content)
+    iocs = extract_iocs(log_content)
+    
+    if progress_callback:
+        progress_callback("Splitting", 2, total_steps, "正在切分日志...")
+    chunks = split_logs(log_content)
+    if not chunks:
+        return "❌ 无法切分日志内容。"
+
+    if progress_callback:
+        progress_callback("Mapping", 3, total_steps, f"并行分析 {len(chunks)} 个块...")
+    findings = []
+    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+        future_to_chunk = {executor.submit(analyze_chunk, chunk): chunk for chunk in chunks}
+        for future in as_completed(future_to_chunk):
+            result = future.result()
+            if result:
+                findings.append(result)
+
+    if progress_callback:
+        progress_callback("Reducing", 4, total_steps, f"汇总 {len(findings)} 个结果...")
+    final_report = reduce_reports(findings, log_stats, iocs)
+
+    if progress_callback:
+        progress_callback("Completed", 5, total_steps, "分析完成！")
+    return final_report

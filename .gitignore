@@ -18,7 +18,9 @@ uploads/*
 reports/*
 chroma_db/
 *.db
-
+/data/
+/downloads/
+/logs/
 # IDE
 .vscode/
 .idea/

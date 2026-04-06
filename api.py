@@ -1,419 +1,154 @@
 import os
-import time
-import uuid
-import threading
 import logging
-from typing import Dict, Optional, Callable
+import hashlib
+import json
+import time
 from datetime import datetime
-from soc_crew import create_soc_crew
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Body
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse
+from typing import Dict, Any, Callable
 
-# ================= 日志配置 =================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("__main__")
+# --- 配置与初始化 ---
+from config import LLM_MODEL, TEMPERATURE, MAX_TOKENS, CHUNK_SIZE, MAX_THREADS, CHUNK_OVERLAP
+from llm_client import call_llm
 
-# ================= 导入分析模块 =================
+# 动态导入 Advanced Analyzer
 try:
-    from simple_analyzer import analyze_log_text as analyze_log_text_func
-    logger.info("✅ 成功加载 [Simple Analyzer]")
-except ImportError as e:
-    logger.warning(f"⚠️ 无法加载 Simple Analyzer: {e}")
-    analyze_log_text_func = None
-
-try:
-    from advanced_analyzer import analyze_large_log as analyze_large_log_func
-    logger.info("✅ 成功加载 [Advanced Analyzer] (支持 RAG)")
-except ImportError as e:
-    logger.warning(f"⚠️ 无法加载 Advanced Analyzer: {e}")
+    from advanced_analyzer import analyze_logs as analyze_large_log_func
+    ADVANCED_ANALYZER_AVAILABLE = True
+    logging.info("✅ Advanced Analyzer 模块加载成功")
+except Exception as e:
+    logging.error(f"❌ Advanced Analyzer 模块导入失败: {e}")
+    ADVANCED_ANALYZER_AVAILABLE = False
     analyze_large_log_func = None
 
-# ================= 导入 RAG 引擎 (用于问答) =================
-try:
-    from rag_engine import rag_engine
-    RAG_ENABLED = True
-    logger.info("✅ RAG 问答引擎已就绪")
-except ImportError as e:
-    RAG_ENABLED = False
-    logger.warning(f"⚠️ RAG 问答引擎未加载：{e}")
-    rag_engine = None
+app = FastAPI()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# ================= 初始化 FastAPI 应用 =================
-app = FastAPI(title="AI Log Security Analyzer", version="2.1-RAG")
+# --- 挂载静态文件目录 ---
+app.mount("/static", StaticFiles(directory="static"), name="static")
+# --- 挂载下载目录，用于提供报告文件服务 ---
+app.mount("/downloads", StaticFiles(directory="downloads"), name="downloads")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ✅ 确保 reports 目录存在
-REPORTS_DIR = "reports"
-os.makedirs(REPORTS_DIR, exist_ok=True)
+# 存储任务状态
+task_status: Dict[str, Dict[str, Any]] = {}
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root():
-    try:
-        with open("index.html", "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "index.html not found"})
+async def read_root(request: Request):
+    with open("index.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
 
-# ================= 全局任务存储 =================
-TASK_POOL: Dict[str, dict] = {}
-TASK_LOCK = threading.Lock()
-
-def make_progress_callback(task_id: str):
-    """
-    创建一个闭包函数，用于在分析过程中更新 TASK_POOL 的进度
-    """
-    def callback(stage: str, current: int, total: int, msg: str):
-        with TASK_LOCK:
-            if task_id in TASK_POOL:
-                TASK_POOL[task_id]["stage"] = stage
-                TASK_POOL[task_id]["progress_current"] = current
-                TASK_POOL[task_id]["progress_total"] = total
-                TASK_POOL[task_id]["progress_msg"] = msg
-                if total > 0:
-                    TASK_POOL[task_id]["progress_percent"] = round((current / total) * 100, 1)
-                else:
-                    TASK_POOL[task_id]["progress_percent"] = 0
-    return callback
-
-def run_analysis_task(task_id: str, file_content: str, filename: str, is_large: bool):
-    logger.info(f"🚀 [Task {task_id[:8]}] 开始后台分析...")
+# 同步分析接口（保留，但仅支持 advanced 模式）
+@app.post("/analyze")
+async def analyze_log(file: UploadFile = File(...), mode: str = "advanced"):
+    content = await file.read()
+    log_content = content.decode('utf-8')
     
-    with TASK_LOCK:
-        TASK_POOL[task_id]["stage"] = "initializing"
-        TASK_POOL[task_id]["progress_percent"] = 0
-        TASK_POOL[task_id]["progress_msg"] = "准备启动..."
+    if mode == "advanced" and ADVANCED_ANALYZER_AVAILABLE:
+        result = analyze_large_log_func(log_content, log_source=file.filename)
+        return {"advanced_result": result}
+    elif mode == "advanced" and not ADVANCED_ANALYZER_AVAILABLE:
+        return JSONResponse(status_code=500, content={"error": "Advanced Analyzer 模块不可用"})
+    else:
+        return JSONResponse(status_code=400, content={"error": "仅支持 advanced 模式"})
 
-    try:
-        result = ""
-        progress_cb = make_progress_callback(task_id)
-        
-        if is_large:
-            if not analyze_large_log_func:
-                raise Exception("Advanced analyzer not loaded.")
-            logger.info(f"🔴 [Task {task_id[:8]}] 高级模式 (Split-Map-Reduce + RAG)")
-            result = analyze_large_log_func(file_content, file_id=task_id, progress_callback=progress_cb)
-        else:
-            if not analyze_log_text_func:
-                raise Exception("Simple analyzer not loaded.")
-            logger.info(f"🟢 [Task {task_id[:8]}] 简单模式")
-            progress_cb("processing", 50, 100, "正在分析...")
-            result = analyze_log_text_func(file_content)
-            progress_cb("completed", 100, 100, "完成")
-            
-        with TASK_LOCK:
-            TASK_POOL[task_id]["status"] = "completed"
-            TASK_POOL[task_id]["result"] = result
-            TASK_POOL[task_id]["end_time"] = time.time()
-            TASK_POOL[task_id]["rag_indexed"] = is_large and RAG_ENABLED
-            TASK_POOL[task_id]["progress_msg"] = "分析完成!"
-            logger.info(f"🎉 [Task {task_id[:8]}] 分析完成!")
-            
-    except Exception as e:
-        logger.error(f"❌ [Task {task_id[:8]}] 分析失败：{str(e)}", exc_info=True)
-        with TASK_LOCK:
-            TASK_POOL[task_id]["status"] = "failed"
-            TASK_POOL[task_id]["error"] = str(e)
-            TASK_POOL[task_id]["progress_msg"] = f"错误：{str(e)}"
-
-def run_soc_analysis_task(task_id: str, file_content: str, filename: str):
-    logger.info(f"🤖 [SOC Task {task_id[:8]}] 启动多智能体协作分析...")
-    
-    with TASK_LOCK:
-        TASK_POOL[task_id]["stage"] = "initializing"
-        TASK_POOL[task_id]["progress_msg"] = "正在组建 SOC 团队..."
-        TASK_POOL[task_id]["progress_percent"] = 10
-
-    try:
-        if 'create_soc_crew' not in globals():
-            raise ImportError("SOC Crew 模块未加载，无法执行多智能体分析。")
-
-        crew = create_soc_crew()
-        
-        with TASK_LOCK:
-            TASK_POOL[task_id]["stage"] = "analyzing"
-            TASK_POOL[task_id]["progress_msg"] = "智能体正在协作分析中 (此过程可能较慢)..."
-            TASK_POOL[task_id]["progress_percent"] = 30
-
-        inputs = {
-            "log_content": file_content,
-            "file_id": task_id
-        }
-        
-        result = crew.kickoff(inputs=inputs)
-        final_report = result.raw
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"SOC_Report_{timestamp}_{task_id[:8]}.md"
-        file_path = os.path.join(REPORTS_DIR, safe_filename)
-        
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(final_report)
-            logger.info(f"💾 [SOC Task {task_id[:8]}] 报告已保存至：{file_path}")
-            download_url = f"/download_report/{safe_filename}"
-        except Exception as save_err:
-            logger.error(f"保存报告失败：{save_err}")
-            download_url = None
-        
-        with TASK_LOCK:
-            TASK_POOL[task_id]["status"] = "completed"
-            TASK_POOL[task_id]["result"] = final_report
-            TASK_POOL[task_id]["download_url"] = download_url  # ✅ 存储下载链接
-            TASK_POOL[task_id]["end_time"] = time.time()
-            TASK_POOL[task_id]["rag_indexed"] = True
-            TASK_POOL[task_id]["progress_percent"] = 100
-            TASK_POOL[task_id]["progress_msg"] = "SOC 分析完成!"
-            
-        logger.info(f"🎉 [SOC Task {task_id[:8]}] 分析完成!")
-            
-    except Exception as e:
-        logger.error(f"❌ [SOC Task {task_id[:8]}] 分析失败：{str(e)}", exc_info=True)
-        with TASK_LOCK:
-            TASK_POOL[task_id]["status"] = "failed"
-            TASK_POOL[task_id]["error"] = str(e)
-            TASK_POOL[task_id]["progress_msg"] = f"SOC 分析错误：{str(e)}"
-            TASK_POOL[task_id]["progress_percent"] = 100
-
-@app.post("/analyze_soc")
-async def analyze_file_soc(file: UploadFile = File(...)):
-    logger.info(f"📥 收到 SOC 多智能体分析请求：{file.filename}")
-    
-    try:
-        content_bytes = await file.read()
-        log_content = content_bytes.decode("utf-8", errors="ignore")
-        
-        if not log_content.strip():
-            raise HTTPException(status_code=400, detail="File is empty")
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File read error: {str(e)}")
-
-    task_id = str(uuid.uuid4())
-    
-    with TASK_LOCK:
-        TASK_POOL[task_id] = {
-            "status": "processing",
-            "filename": file.filename,
-            "size_mb": round(len(content_bytes) / (1024 * 1024), 2),
-            "mode": "soc_multi_agent",
-            "start_time": time.time(),
-            "result": None,
-            "error": None,
-            "download_url": None,  # ✅ 初始化
-            "rag_indexed": False,
-            "stage": "initializing",
-            "progress_percent": 0,
-            "progress_msg": "准备启动 SOC 团队..."
-        }
-    
-    thread = threading.Thread(
-        target=run_soc_analysis_task,
-        args=(task_id, log_content, file.filename)
-    )
-    thread.daemon = True
-    thread.start()
-    
-    return {
-        "task_id": task_id,
-        "message": "SOC Multi-Agent Analysis started",
-        "mode": "soc_multi_agent"
-    }
-
-# ================= API 路由 =================
-
+# 异步分析接口
 @app.post("/analyze_async")
-async def analyze_file_async(file: UploadFile = File(...)):
-    if not analyze_log_text_func:
-        raise HTTPException(status_code=500, detail="Server configuration error: No analyzer loaded.")
-
-    logger.info(f"📥 收到异步分析请求：{file.filename}")
+async def analyze_log_async(background_tasks: BackgroundTasks, file: UploadFile = File(...), mode: str = "advanced"):
+    # 强制要求 mode 为 advanced
+    if mode != "advanced":
+        return JSONResponse(status_code=400, content={"error": "仅支持 advanced 模式"})
     
-    try:
-        content_bytes = await file.read()
-        log_content = content_bytes.decode("utf-8", errors="ignore")
-        file_size_mb = len(content_bytes) / (1024 * 1024)
-        
-        if not log_content.strip():
-            raise HTTPException(status_code=400, detail="File is empty or unreadable")
-            
-    except Exception as e:
-        logger.error(f"文件读取失败：{e}")
-        raise HTTPException(status_code=500, detail=f"File read error: {str(e)}")
-
-    is_large = len(log_content) > 800000  
-    task_id = str(uuid.uuid4())
+    content = await file.read()
+    log_content = content.decode('utf-8')
+    task_id = hashlib.md5((file.filename + str(time.time())).encode()).hexdigest()
     
-    with TASK_LOCK:
-        TASK_POOL[task_id] = {
-            "status": "processing",
-            "filename": file.filename,
-            "size_mb": round(file_size_mb, 2),
-            "mode": "advanced" if is_large else "simple",
-            "start_time": time.time(),
-            "result": None,
-            "error": None,
-            "rag_indexed": False
-        }
-    
-    thread = threading.Thread(
-        target=run_analysis_task,
-        args=(task_id, log_content, file.filename, is_large)
-    )
-    thread.daemon = True
-    thread.start()
-    
-    logger.info(f"✅ 任务 {task_id[:8]} 已创建并启动 (模式：{'Advanced' if is_large else 'Simple'})")
-    
-    return {
-        "task_id": task_id,
-        "message": "Analysis started in background",
-        "filename": file.filename,
-        "size_mb": round(file_size_mb, 2),
-        "estimated_mode": "advanced" if is_large else "simple",
-        "hint": "Use GET /status/{task_id} to poll results"
+    task_status[task_id] = { 
+        "status": "processing", 
+        "progress": 0, 
+        "total": 100, 
+        "message": "任务初始化...",
+        "result": None, 
+        "created_at": datetime.now().isoformat() 
     }
+    
+    logging.info(f"📥 收到异步分析请求：{file.filename}, 模式: {mode}")
+    
+    # 进度回调函数
+    def update_progress(step: str, current: int, total: int, message: str):
+        percent = int(current / total * 100) if total > 0 else 0
+        task_status[task_id]["progress"] = percent 
+        task_status[task_id]["step"] = step 
+        task_status[task_id]["message"] = message
+        if current >= total:
+            task_status[task_id]["status"] = "completed"
+    
+    background_tasks.add_task(run_analysis_task, task_id, log_content, file.filename, mode, update_progress)
+    return {"task_id": task_id, "message": "任务创建成功"}
+
+def run_analysis_task(task_id: str, log_content: str, filename: str, mode: str, progress_callback: Callable):
+    try:
+        logging.info(f"🚀 [Task {task_id}] 开始后台分析，模式：{mode}...")
+        
+        if mode != "advanced":
+            task_status[task_id]["status"] = "failed"
+            task_status[task_id]["message"] = "仅支持 advanced 模式"
+            return
+        
+        if not ADVANCED_ANALYZER_AVAILABLE:
+            error_msg = "Advanced Analyzer 模块不可用，请检查 advanced_analyzer.py 文件"
+            logging.error(f"❌ [Task {task_id}] {error_msg}")
+            task_status[task_id]["status"] = "failed"
+            task_status[task_id]["message"] = error_msg
+            task_status[task_id]["result"] = error_msg
+            return
+        
+        # 高级模式：传入进度回调
+        result = analyze_large_log_func(
+            log_content, 
+            log_source=filename,
+            progress_callback=progress_callback
+        )
+        
+        if isinstance(result, dict):
+            result_str = json.dumps(result, ensure_ascii=False, indent=2)
+        else:
+            result_str = str(result)
+
+        # --- 保存报告文件 ---
+        os.makedirs("downloads", exist_ok=True)
+        safe_filename = f"report_{task_id}.md"
+        file_path = os.path.join("downloads", safe_filename)
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("# 网络安全日志分析报告\n\n")
+            f.write(f"**任务ID**: {task_id}\n")
+            f.write(f"**分析时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"**源文件**: {filename}\n\n")
+            f.write("---\n\n")
+            f.write(result_str)
+
+        download_url = f"/downloads/{safe_filename}"
+
+        task_status[task_id]["status"] = "completed"
+        task_status[task_id]["result"] = result_str
+        task_status[task_id]["download_url"] = download_url
+        task_status[task_id]["message"] = "分析完成！点击报告标签页查看结果。"
+        
+    except Exception as e:
+        error_msg = f"分析失败：{str(e)}"
+        logging.error(f"❌ [Task {task_id}] {error_msg}", exc_info=True)
+        task_status[task_id]["status"] = "failed"
+        task_status[task_id]["message"] = error_msg
+        task_status[task_id]["result"] = error_msg
 
 @app.get("/status/{task_id}")
 async def get_task_status(task_id: str):
-    with TASK_LOCK:
-        task = TASK_POOL.get(task_id)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    return task
+    if task_id not in task_status:
+        return JSONResponse(status_code=404, content={"error": "任务不存在"})
+    return task_status[task_id]
 
-# ================= 下载报告接口 =================
-@app.get("/download_report/{filename}")
-async def download_report(filename: str):
-    """提供报告文件下载"""
-    file_path = os.path.join(REPORTS_DIR, filename)
-    
-    # 安全检查：防止目录遍历攻击
-    if not os.path.abspath(file_path).startswith(os.path.abspath(REPORTS_DIR)):
-        raise HTTPException(status_code=403, detail="Invalid filename")
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="报告文件未找到，可能已被清理或生成失败")
-    
-    return FileResponse(
-        path=file_path,
-        media_type="text/markdown",
-        filename=filename,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
-
-# ================= RAG 问答接口 =================
-@app.post("/chat")
-async def chat_with_log(
-    task_id: str = Body(..., embed=True),
-    question: str = Body(..., embed=True)
-):
-    if not RAG_ENABLED or not rag_engine:
-        raise HTTPException(status_code=503, detail="RAG engine is not available")
-    
-    with TASK_LOCK:
-        task = TASK_POOL.get(task_id)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    if task["status"] != "completed":
-        raise HTTPException(status_code=400, detail=f"Task is still {task['status']}, please wait.")
-    
-    if not task.get("rag_indexed", False):
-        raise HTTPException(status_code=400, detail="This task was processed in Simple Mode and does not have RAG index.")
-
-    logger.info(f"💬 [Chat] 收到来自任务 {task_id[:8]} 的问题：{question[:50]}...")
-    
-    try:
-        relevant_chunks = rag_engine.query(file_id=task_id, user_question=question, top_k=5)
-        
-        if not relevant_chunks:
-            return {
-                "answer": "未在日志中找到与该问题相关的信息。请尝试更换关键词。",
-                "sources": []
-            }
-        
-        context_parts = []
-        for i, chunk in enumerate(relevant_chunks):
-            context_parts.append(f"[片段 {i+1}]:\n{chunk['content']}")
-        
-        context = "\n\n---\n\n".join(context_parts)
-        
-        from simple_analyzer import call_llm
-        
-        prompt = f"""
-        你是一名安全日志分析助手。
-        基于以下检索到的日志片段，回答用户的问题。
-        如果日志中没有相关信息，请诚实告知。
-        
-        【相关日志片段】:
-        {context}
-        
-        【用户问题】:
-        {question}
-        
-        请给出清晰、专业的回答。
-        """
-        
-        answer = call_llm(prompt, system_prompt="你是安全日志助手，基于事实回答。")
-        
-        sources = [
-            {
-                "chunk_id": c['chunk_id'],
-                "similarity": round(c['similarity_score'], 3),
-                "preview": c['content'][:100] + "..." if len(c['content']) > 100 else c['content']
-            }
-            for c in relevant_chunks
-        ]
-        
-        return {
-            "answer": answer,
-            "sources": sources,
-            "task_id": task_id
-        }
-        
-    except Exception as e:
-        logger.error(f"Chat 处理失败：{e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
-
-@app.post("/analyze")
-async def analyze_file_sync(file: UploadFile = File(...)):
-    logger.info(f"📥 收到同步分析请求：{file.filename}")
-    
-    if not analyze_log_text_func:
-        raise HTTPException(status_code=500, detail="Analyzer not loaded")
-
-    try:
-        content_bytes = await file.read()
-        log_content = content_bytes.decode("utf-8", errors="ignore")
-        
-        logger.info("🟢 触发 [简单模式] (Sync)")
-        result = analyze_log_text_func(log_content)
-        
-        return {
-            "status": "completed",
-            "filename": file.filename,
-            "result": result
-        }
-        
-    except Exception as e:
-        logger.error(f"同步分析失败：{e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ================= 启动入口 =================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_keep_alive=300)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

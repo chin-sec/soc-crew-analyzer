@@ -1,144 +1,125 @@
 import os
-import re
-import logging
-from typing import Optional, Type
+import requests
+from typing import Optional, Dict, Any
+from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
-try:
-    from crewai.tools import BaseTool
-except ImportError:
+# =================配置区域=================
+# 如果你有 VirusTotal API Key，请在这里填写，否则将使用模拟模式
+VIRUS_TOTAL_API_KEY = os.getenv("VT_API_KEY", "") 
+# =========================================
+
+def get_whois_info(target: str) -> str:
+    """
+    查询域名或IP的WHOIS注册信息。
+    使用免费的 whoisxmlapi 或类似公共接口进行演示。
+    注意：生产环境建议购买付费API或搭建本地Whois服务器。
+    """
+    if not target:
+        return "目标不能为空"
+    
     try:
-        from crewai_tools import BaseTool
-    except ImportError:
-        # 如果都找不到，尝试旧版路径
-        from crewai import BaseTool
-
-from langchain_core.tools import Tool as LangChainTool
-
-# 尝试导入 RAG 引擎
-try:
-    from rag_engine import rag_engine
-    RAG_AVAILABLE = True
-except ImportError:
-    RAG_AVAILABLE = False
-    rag_engine = None
-
-logger = logging.getLogger(__name__)
-
-# ================= 定义输入参数模型 =================
-
-class LogPreprocessorInput(BaseModel):
-    log_content: str = Field(..., description="原始安全日志内容字符串。如果内容过长，建议截取关键部分。")
-
-class RagSearchInput(BaseModel):
-    query: str = Field(..., description="自然语言查询关键词，例如 'IP 1.2.3.4 的攻击行为'")
-    file_id: str = Field(..., description="当前分析的任务 ID 或文件 ID，用于限定检索范围。")
-
-# ================= 定义工具类  =================
-
-class LogPreprocessorTool(BaseTool):
-    name: str = "Log Preprocessor & IOC Extractor"
-    description: str = """
-    用于预处理安全日志，提取关键统计信息和 IOC (Indicators of Compromise)。
-    输入应为日志内容字符串。返回 Markdown 格式的统计摘要。
-    """
-    args_schema: Type[BaseModel] = LogPreprocessorInput
-
-    def _run(self, log_content: str) -> str:
-        try:
-            if not isinstance(log_content, str):
-                log_content = str(log_content)
-            
-            log_content = log_content.replace('\x00', '') 
-            lines = log_content.strip().split('\n')
-            total_lines = len(lines)
-            
-            ips = set()
-            users = set()
-            suspicious_keywords = ["failed", "error", "denied", "attack", "injection", "shell", "unauthorized", "invalid"]
-            suspicious_count = 0
-            suspicious_samples = []
-            
-            for line in lines:
-                line_lower = line.lower()
-                ip_matches = re.findall(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', line)
-                ips.update(ip_matches)
-                user_matches = re.findall(r'(?:user|for\s+user)[=\s]+([a-zA-Z0-9_\-\.\@]+)', line, re.IGNORECASE)
-                users.update(user_matches)
-                
-                if any(kw in line_lower for kw in suspicious_keywords):
-                    suspicious_count += 1
-                    if len(suspicious_samples) < 3:
-                        suspicious_samples.append(line.strip()[:200])
-
-            ip_list_str = ', '.join(list(ips)[:20])
-            if len(ips) > 20: ip_list_str += f"... (共 {len(ips)} 个)"
-                
-            user_list_str = ', '.join(list(users)[:10])
-            if len(users) > 10: user_list_str += f"... (共 {len(users)} 个)"
-                
-            samples_str = "\n".join([f"- `{s}`" for s in suspicious_samples]) if suspicious_samples else "- 无典型样本"
-
-            report = f"""
-### 📊 日志预处理摘要
-- **总行数**: {total_lines}
-- **唯一 IP 数量**: {len(ips)}
-- **涉及用户**: {user_list_str}
-- **可疑日志条目数**: {suspicious_count}
-
-### 🎯 提取到的 IOC
-- **Top IP 地址**: {ip_list_str}
-- **可疑特征**: 包含 'failed', 'error', 'denied' 等关键词。
-
-### 🔍 可疑日志样本
-{samples_str}
-"""
-            return report.strip()
-            
-        except Exception as e:
-            logger.error(f"日志预处理工具执行失败: {e}", exc_info=True)
-            return f"❌ 工具执行错误: {str(e)}"
-
-class RagSearchTool(BaseTool):
-    name: str = "Log RAG Search"
-    description: str = """
-    在已索引的日志库中检索相关信息。
-    必须提供 query (搜索词) 和 file_id (任务ID)。
-    """
-    args_schema: Type[BaseModel] = RagSearchInput
-
-    def _run(self, query: str, file_id: str) -> str:
-        if not RAG_AVAILABLE or not rag_engine:
-            return "❌ 错误：RAG 引擎未初始化。请检查 rag_engine.py 是否正确加载。"
+        # 这里使用一个免费的演示接口 (whoisjs.com)，生产环境请替换为稳健的API
+        # 如果 target 是 IP，whoisjs 也能处理
+        url = f"https://api.whoisjs.com/?q={target}"
+        response = requests.get(url, timeout=5)
         
-        if not file_id:
-            return "❌ 错误：缺少 file_id 参数。无法确定检索范围。"
+        if response.status_code == 200:
+            data = response.json()
+            # 提取关键字段
+            registrar = data.get('registrar', 'Unknown')
+            creation_date = data.get('created', 'Unknown')
+            expiry_date = data.get('expires', 'Unknown')
+            name_servers = ", ".join(data.get('nameservers', []))
             
-        try:
-            logger.info(f"🔍 [RAG Tool] 检索: '{query[:50]}...' in FileID: {file_id}")
-            results = rag_engine.query(file_id=file_id, user_question=query, top_k=5)
+            return (f"WHOIS 查询结果 ({target}):\n"
+                    f"- 注册商: {registrar}\n"
+                    f"- 创建时间: {creation_date}\n"
+                    f"- 过期时间: {expiry_date}\n"
+                    f"-  Nameservers: {name_servers}")
+        else:
+            return f"WHOIS 查询失败: HTTP {response.status_code}"
             
-            if not results:
-                return f"⚠️ 未在文件 ID `{file_id}` 中找到与 '{query}' 相关的信息。"
-                
-            formatted_results = []
-            for i, r in enumerate(results):
-                content = r.get('content', 'No content')
-                score = r.get('similarity_score', 0.0)
-                meta = r.get('metadata', {})
-                chunk_idx = meta.get('chunk_index', 'N/A')
-                formatted_results.append(
-                    f"**[证据片段 {i+1}]** (相似度: {score:.3f}, 位置: {chunk_idx})\n"
-                    f"> {content}\n"
-                )
-                
-            return "\n---\n".join(formatted_results)
-            
-        except Exception as e:
-            logger.error(f"RAG 检索工具执行失败: {e}", exc_info=True)
-            return f"❌ RAG 检索错误: {str(e)}"
+    except Exception as e:
+        return f"WHOIS 查询出错: {str(e)}"
 
-# ================= 实例化工具 =================
-# 这里创建的是真正的 BaseTool 实例，可以直接传给 Agent
-log_preprocess_tool = LogPreprocessorTool()
-rag_search_tool = RagSearchTool()
+def get_virus_total_info(target: str) -> str:
+    """
+    查询 VirusTotal 威胁情报。
+    支持 IP、域名、URL 和 Hash。
+    """
+    if not target:
+        return "目标不能为空"
+    
+    # 如果没有配置 API Key，返回模拟数据以便测试流程跑通
+    if not VIRUS_TOTAL_API_KEY:
+        return (f"[模拟模式 - 未配置 VT API Key] \n"
+                f"目标: {target}\n"
+                f"检测结果: 0/90 恶意 (模拟数据)\n"
+                f"信誉评分: 未知\n"
+                f"提示: 请在环境变量中设置 VT_API_KEY 以获取真实数据。")
+
+    try:
+        # 判断类型并选择端点 (简化版，主要支持 IP 和 Domain)
+        # 实际生产中需要更复杂的类型检测
+        endpoint = "https://www.virustotal.com/api/v3/ip_addresses" if "." in target and ":" not in target else "https://www.virustotal.com/api/v3/domains"
+        
+        headers = {
+            "x-apikey": VIRUS_TOTAL_API_KEY
+        }
+        
+        url = f"{endpoint}/{target}"
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            attributes = data.get('data', {}).get('attributes', {})
+            
+            # 提取关键统计
+            stats = attributes.get('last_analysis_stats', {})
+            malicious = stats.get('malicious', 0)
+            suspicious = stats.get('suspicious', 0)
+            harmless = stats.get('harmless', 0)
+            
+            reputation = attributes.get('reputation', 'N/A')
+            
+            return (f"VirusTotal 情报 ({target}):\n"
+                    f"- 恶意检测数: {malicious}/90\n"
+                    f"- 可疑检测数: {suspicious}\n"
+                    f"- 安全检测数: {harmless}\n"
+                    f"- 信誉评分: {reputation}\n"
+                    f"- 结论: {'⚠️ 高危' if malicious > 2 else '✅ 相对安全'}")
+        elif response.status_code == 404:
+            return f"VirusTotal 未找到该记录 ({target})，可能是新出现的威胁或干净流量。"
+        else:
+            return f"VirusTotal 查询失败: HTTP {response.status_code}"
+            
+    except Exception as e:
+        return f"VirusTotal 查询出错: {str(e)}"
+
+# ================= CrewAI Tools 定义 =================
+
+class WhoisSearchInput(BaseModel):
+    target: str = Field(..., description="要查询的域名或IP地址，例如 'google.com' 或 '8.8.8.8'")
+
+class WhoisSearchTool(BaseTool):
+    name: str = "WHOIS Lookup"
+    description: str = "查询域名或IP的注册信息、所有者和创建时间。用于判断域名的可信度。"
+    args_schema: type[BaseModel] = WhoisSearchInput
+    
+    def _run(self, target: str) -> str:
+        return get_whois_info(target)
+
+class VirusTotalSearchInput(BaseModel):
+    target: str = Field(..., description="要查询的 IP、域名、URL 或文件 Hash")
+
+class VirusTotalSearchTool(BaseTool):
+    name: str = "VirusTotal Threat Intelligence"
+    description: str = "查询全球威胁情报数据库，判断 IP、域名或文件是否恶意。"
+    args_schema: type[BaseModel] = VirusTotalSearchInput
+    
+    def _run(self, target: str) -> str:
+        return get_virus_total_info(target)
+
+# 导出函数供 soc_crew.py 直接导入使用
+__all__ = ["get_whois_info", "get_virus_total_info", "WhoisSearchTool", "VirusTotalSearchTool"]

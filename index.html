@@ -2,269 +2,547 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 安全日志智能分析系统 (SOC Multi-Agent)</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>AI 安全日志分析平台</title>
+    <!-- 使用 marked 渲染 Markdown 报告 -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
-    
+    <!-- 使用 highlight.js 增强代码块显示（可选） -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- 字体与图标 -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
-        .markdown-body { line-height: 1.6; color: #333; }
-        .markdown-body h1 { font-size: 2em; font-weight: bold; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.3em; margin-top: 24px; }
-        .markdown-body h2 { font-size: 1.5em; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; margin-top: 20px; }
-        .markdown-body pre { background-color: #0d1117; padding: 16px; border-radius: 6px; overflow-x: auto; }
-        .markdown-body code { font-family: 'Consolas', 'Monaco', monospace; background-color: rgba(175,184,193,0.2); padding: 0.2em 0.4em; border-radius: 6px; }
-        .markdown-body pre code { background-color: transparent; padding: 0; color: #c9d1d9; }
-        .markdown-body table { border-collapse: collapse; width: 100%; margin: 16px 0; }
-        .markdown-body th, .markdown-body td { border: 1px solid #dfe2e5; padding: 8px 12px; text-align: left; }
-        .markdown-body th { background-color: #f6f8fa; font-weight: bold; }
-        .markdown-body blockquote { border-left: 4px solid #dfe2e5; padding-left: 16px; color: #6a737d; margin: 16px 0; }
-        
-        /* 加载动画 */
-        .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3b82f6;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0a0f1e 0%, #0c1222 100%);
+            color: #eef2ff;
+            min-height: 100vh;
+            padding: 2rem 1.5rem;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* 头部 */
+        .header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+        .header h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #a5f3fc, #818cf8);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            letter-spacing: -0.3px;
+        }
+        .header p {
+            color: #8b9bcf;
+            margin-top: 0.5rem;
+            font-size: 0.95rem;
+        }
+
+        /* 卡片样式 */
+        .card {
+            background: rgba(18, 25, 45, 0.75);
+            backdrop-filter: blur(8px);
+            border-radius: 1.5rem;
+            border: 1px solid rgba(56, 78, 118, 0.4);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            padding: 1.8rem;
+            transition: all 0.2s ease;
+        }
+
+        /* 上传区域 */
+        .upload-area {
+            border: 2px dashed #3b4b6e;
+            border-radius: 1.2rem;
+            background: rgba(12, 18, 34, 0.6);
+            padding: 2rem 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .upload-area:hover {
+            border-color: #6366f1;
+            background: rgba(99, 102, 241, 0.05);
+        }
+        .upload-area i {
+            font-size: 3rem;
+            color: #818cf8;
+            margin-bottom: 0.8rem;
+        }
+        .file-name {
+            margin-top: 0.8rem;
+            font-weight: 500;
+            color: #cbd5ff;
+            word-break: break-all;
+        }
+
+        /* 模式选择 */
+        .mode-group {
+            display: flex;
+            gap: 1.2rem;
+            flex-wrap: wrap;
+            margin: 1.5rem 0;
+        }
+        .mode-option {
+            flex: 1;
+            background: #111827;
+            border: 1px solid #2d3a5e;
+            border-radius: 1rem;
+            padding: 0.8rem 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .mode-option.active {
+            border-color: #818cf8;
+            background: #1e293b;
+            box-shadow: 0 0 10px rgba(129, 140, 248, 0.3);
+        }
+        .mode-option h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+        }
+        .mode-option p {
+            font-size: 0.75rem;
+            color: #9ca8cf;
+        }
+
+        /* 按钮 */
+        .btn {
+            background: #4f46e5;
+            border: none;
+            padding: 0.8rem 1.8rem;
+            border-radius: 2rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .btn:hover:not(:disabled) {
+            background: #6366f1;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 14px rgba(79, 70, 229, 0.4);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid #4f46e5;
+            color: #c7d2fe;
+        }
+        .btn-outline:hover:not(:disabled) {
+            background: rgba(79, 70, 229, 0.2);
+        }
+
+        /* 进度条区域 */
+        .progress-section {
+            margin-top: 1.8rem;
+            background: #0f172a;
+            border-radius: 1rem;
+            padding: 1rem 1.2rem;
+            border-left: 4px solid #4f46e5;
+        }
+        .progress-bar-bg {
+            background: #1e293b;
+            border-radius: 1rem;
+            height: 0.6rem;
+            overflow: hidden;
+            margin: 0.8rem 0;
+        }
+        .progress-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #818cf8, #4f46e5);
+            border-radius: 1rem;
+            transition: width 0.3s ease;
+        }
+        .progress-message {
+            font-size: 0.85rem;
+            color: #b9c3e6;
+            display: flex;
+            justify-content: space-between;
+        }
+        .step-icon {
+            font-size: 0.8rem;
+            margin-right: 0.4rem;
+        }
+
+        /* 报告区域 */
+        .report-container {
+            margin-top: 2rem;
+        }
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .report-content {
+            background: #0f172a;
+            border-radius: 1.2rem;
+            padding: 1.5rem;
+            border: 1px solid #2d3a5e;
+            max-height: 600px;
+            overflow-y: auto;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        /* Markdown 样式 */
+        .report-content h1, .report-content h2 {
+            border-bottom: 1px solid #334155;
+            padding-bottom: 0.3rem;
+            margin-top: 1rem;
+        }
+        .report-content code {
+            background: #1e293b;
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.3rem;
+            font-family: monospace;
+        }
+        .report-content pre {
+            background: #0b1120;
+            padding: 0.8rem;
+            border-radius: 0.8rem;
+            overflow-x: auto;
+        }
+        .badge {
+            background: #1e293b;
+            padding: 0.2rem 0.6rem;
+            border-radius: 2rem;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 2.5rem;
+            font-size: 0.75rem;
+            color: #5b6e9c;
+        }
+        @media (max-width: 680px) {
+            body { padding: 1rem; }
+            .card { padding: 1rem; }
+        }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen flex flex-col">
+<body>
+<div class="container">
+    <div class="header">
+        <h1><i class="fas fa-shield-alt"></i> 安全日志深度分析</h1>
+        <p>基于 Split-Map-Reduce + AI 大模型 | 混合正则预检 | 多模式支持</p>
+    </div>
 
-    <!-- 顶部导航 -->
-    <header class="bg-blue-600 text-white shadow-lg">
-        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
-            <h1 class="text-2xl font-bold">🛡️ AI 安全日志智能分析系统</h1>
-            <span class="text-sm bg-blue-700 px-3 py-1 rounded-full">SOC Multi-Agent 版</span>
+    <div class="card">
+        <!-- 文件上传 -->
+        <div id="uploadArea" class="upload-area">
+            <i class="fas fa-cloud-upload-alt"></i>
+            <p>点击或拖拽上传日志文件（支持 .log, .txt, .access）</p>
+            <input type="file" id="fileInput" accept=".log,.txt,.access,text/plain" style="display: none;">
+            <div id="fileName" class="file-name"></div>
         </div>
-    </header>
 
-    <!-- 主内容区 -->
-    <main class="container mx-auto px-6 py-8 flex-grow">
-        
-        <!-- 上传区域 -->
-        <div class="bg-white rounded-lg shadow-md p-8 mb-8">
-            <h2 class="text-xl font-semibold mb-4 text-gray-800">📤 上传日志文件</h2>
-            <p class="text-gray-600 mb-4 text-sm">支持 .log, .txt 格式。系统将自动启动多智能体团队进行深度分析。</p>
-            
-            <div class="flex items-center space-x-4">
-                <input type="file" id="fileInput" class="block w-full text-sm text-gray-500
-                    file:mr-4 file:py-2 file:px-4
-                    file:rounded-full file:border-0
-                    file:text-sm file:font-semibold
-                    file:bg-blue-50 file:text-blue-700
-                    hover:file:bg-blue-100
-                "/>
-                <button onclick="startAnalysis()" id="analyzeBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded transition duration-200">
-                    🚀 开始 SOC 分析
-                </button>
+        <!-- 分析模式 -->
+        <div class="mode-group">
+            <div class="mode-option" data-mode="basic">
+                <h3><i class="fas fa-chart-simple"></i> 基础模式</h3>
+                <p>正则统计 + IOC 提取，快速预览</p>
             </div>
-            <p id="fileInfo" class="mt-2 text-sm text-gray-500"></p>
-        </div>
-
-        <!-- 进度与状态区域 -->
-        <div id="statusContainer" class="hidden bg-white rounded-lg shadow-md p-8 mb-8 text-center">
-            <h3 class="text-lg font-medium text-gray-700 mb-2">正在分析中...</h3>
-            <div class="loader"></div>
-            <p id="statusText" class="text-blue-600 font-medium">正在组建智能体团队...</p>
-            <div class="w-full bg-gray-200 rounded-full h-2.5 mt-4">
-                <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+            <div class="mode-option active" data-mode="advanced">
+                <h3><i class="fas fa-brain"></i> 高级模式 (AI)</h3>
+                <p>Split-Map-Reduce + LLM 深度威胁检测</p>
             </div>
-            <p id="progressDetail" class="text-xs text-gray-500 mt-2">0%</p>
         </div>
 
-        <!-- 结果展示区域 -->
-        <div id="resultContainer" class="hidden bg-white rounded-lg shadow-md p-8 mb-8">
-            <div class="flex justify-between items-center mb-6 border-b pb-4">
-                <h2 class="text-2xl font-bold text-gray-800">📊 分析报告</h2>
-                <div id="actionButtons" class="space-x-3">
-                    <!-- 下载按钮将在这里动态生成 -->
+        <div style="display: flex; justify-content: center; gap: 1rem; margin: 1rem 0 0.5rem;">
+            <button id="analyzeBtn" class="btn"><i class="fas fa-play"></i> 开始分析</button>
+            <button id="clearBtn" class="btn btn-outline"><i class="fas fa-eraser"></i> 清空结果</button>
+        </div>
+
+        <!-- 进度区域 -->
+        <div id="progressSection" class="progress-section" style="display: none;">
+            <div class="progress-message">
+                <span><i class="fas fa-spinner fa-pulse step-icon"></i> <span id="stepMsg">准备就绪</span></span>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar-bg">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 分析报告卡片 -->
+    <div id="reportCard" class="report-container" style="display: none;">
+        <div class="card">
+            <div class="report-header">
+                <h3><i class="fas fa-file-alt"></i> 分析报告</h3>
+                <div>
+                    <button id="downloadReportBtn" class="btn btn-outline" style="padding: 0.4rem 1.2rem;">
+                        <i class="fas fa-download"></i> 下载报告 (Markdown)
+                    </button>
                 </div>
             </div>
-            
-            <div id="reportContent" class="markdown-body text-sm">
-                <!-- 报告内容将渲染在这里 -->
+            <div id="reportContent" class="report-content">
+                <!-- 动态渲染报告内容 -->
+                <div class="loading-spinner">加载报告中...</div>
             </div>
         </div>
-
-        <!-- 错误提示 -->
-        <div id="errorContainer" class="hidden bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-md mb-8" role="alert">
-            <p class="font-bold">❌ 分析失败</p>
-            <p id="errorMessage"></p>
-        </div>
-
-    </main>
-
-    <footer class="bg-gray-800 text-gray-400 text-center py-6">
-        <p>&copy; 2024 AI SOC Analyzer. Powered by CrewAI & DashScope.</p>
+    </div>
+    <footer>
+        ⚡ 使用先进 MapReduce 架构 | 正则预检过滤 >90% 安全流量 | 并行 LLM 分析
     </footer>
+</div>
 
-    <script>
-        let currentTaskId = null;
-        let pollInterval = null;
+<script>
+    // DOM 元素
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const fileNameSpan = document.getElementById('fileName');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const progressSection = document.getElementById('progressSection');
+    const stepMsgSpan = document.getElementById('stepMsg');
+    const progressPercentSpan = document.getElementById('progressPercent');
+    const progressFill = document.getElementById('progressFill');
+    const reportCard = document.getElementById('reportCard');
+    const reportContentDiv = document.getElementById('reportContent');
+    const downloadBtn = document.getElementById('downloadReportBtn');
 
-        // 监听文件选择
-        document.getElementById('fileInput').addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                document.getElementById('fileInfo').textContent = `已选择: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
-            } else {
-                document.getElementById('fileInfo').textContent = '';
-            }
+    let selectedFile = null;
+    let currentMode = 'advanced';   // 默认高级模式
+    let currentTaskId = null;
+    let pollingInterval = null;
+    let currentDownloadUrl = null;
+
+    // 模式切换
+    document.querySelectorAll('.mode-option').forEach(opt => {
+        opt.addEventListener('click', () => {
+            document.querySelectorAll('.mode-option').forEach(o => o.classList.remove('active'));
+            opt.classList.add('active');
+            currentMode = opt.getAttribute('data-mode');
         });
+    });
 
-        async function startAnalysis() {
-            const fileInput = document.getElementById('fileInput');
-            const file = fileInput.files[0];
+    // 上传区域点击 & 拖拽
+    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '#818cf8';
+    });
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.style.borderColor = '#3b4b6e';
+    });
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '#3b4b6e';
+        const files = e.dataTransfer.files;
+        if (files.length) handleFileSelect(files[0]);
+    });
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length) handleFileSelect(e.target.files[0]);
+    });
 
-            if (!file) {
-                alert("请先选择一个日志文件！");
-                return;
+    function handleFileSelect(file) {
+        selectedFile = file;
+        fileNameSpan.innerHTML = `<i class="fas fa-file"></i> ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        // 重置报告显示
+        resetReport();
+    }
+
+    function resetReport() {
+        if (pollingInterval) clearInterval(pollingInterval);
+        currentTaskId = null;
+        reportCard.style.display = 'none';
+        progressSection.style.display = 'none';
+        currentDownloadUrl = null;
+        reportContentDiv.innerHTML = '';
+    }
+
+    // 开始分析
+    analyzeBtn.addEventListener('click', async () => {
+        if (!selectedFile) {
+            alert('请先选择或拖拽一个日志文件');
+            return;
+        }
+        if (pollingInterval) clearInterval(pollingInterval);
+        resetReport();
+        
+        // 显示进度区
+        progressSection.style.display = 'block';
+        updateProgressUI(0, '正在上传文件并启动分析...');
+        analyzeBtn.disabled = true;
+        analyzeBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 提交中...';
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('mode', currentMode);
+
+        try {
+            const response = await fetch('/analyze_async', {
+                method: 'POST',
+                body: formData
+            });
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || '请求失败');
             }
+            const data = await response.json();
+            currentTaskId = data.task_id;
+            // 开始轮询状态
+            startPolling(currentTaskId);
+        } catch (err) {
+            console.error(err);
+            alert('启动分析失败: ' + err.message);
+            progressSection.style.display = 'none';
+            analyzeBtn.disabled = false;
+            analyzeBtn.innerHTML = '<i class="fas fa-play"></i> 开始分析';
+        }
+    });
 
-            // 重置界面
-            resetUI();
-            document.getElementById('statusContainer').classList.remove('hidden');
-            document.getElementById('analyzeBtn').disabled = true;
-            document.getElementById('analyzeBtn').classList.add('opacity-50', 'cursor-not-allowed');
-
-            const formData = new FormData();
-            formData.append('file', file);
-
+    function startPolling(taskId) {
+        if (pollingInterval) clearInterval(pollingInterval);
+        pollingInterval = setInterval(async () => {
             try {
-                // 1. 提交任务
-                const response = await fetch('/analyze_soc', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    throw new Error(`提交失败: ${response.statusText}`);
-                }
-
-                const data = await response.json();
-                currentTaskId = data.task_id;
-                console.log("任务已提交:", currentTaskId);
-
-                // 2. 开始轮询状态
-                pollStatus(currentTaskId);
-
-            } catch (error) {
-                showError(error.message);
-                resetButtonState();
-            }
-        }
-
-        function pollStatus(taskId) {
-            if (pollInterval) clearInterval(pollInterval);
-
-            pollInterval = setInterval(async () => {
-                try {
-                    const res = await fetch(`/status/${taskId}`);
-                    if (!res.ok) throw new Error("无法获取状态");
-                    
-                    const data = await res.json();
-                    
-                    // 更新进度条
-                    updateProgress(data.progress_percent, data.progress_msg || data.stage);
-
-                    if (data.status === 'completed') {
-                        // ✅ 任务完成
-                        clearInterval(pollInterval);
-                        showResult(data);
-                        resetButtonState();
-                    } else if (data.status === 'failed') {
-                        // ❌ 任务失败
-                        clearInterval(pollInterval);
-                        showError(data.error || "未知错误");
-                        resetButtonState();
+                const res = await fetch(`/status/${taskId}`);
+                if (!res.ok) {
+                    if (res.status === 404) {
+                        stopPollingAndReset('任务不存在，请重新上传');
                     }
-                    // 其他状态继续轮询
-
-                } catch (error) {
-                    console.error("轮询出错:", error);
-                    // 不中断轮询，偶尔的网络波动可忽略，或者尝试重试
+                    return;
                 }
-            }, 2000); // 每 2 秒轮询一次
-        }
-
-        function updateProgress(percent, message) {
-            const bar = document.getElementById('progressBar');
-            const detail = document.getElementById('progressDetail');
-            const statusText = document.getElementById('statusText');
-
-            bar.style.width = `${percent}%`;
-            detail.textContent = `${percent}%`;
-            if (message) {
-                statusText.textContent = message;
+                const task = await res.json();
+                // 更新进度
+                const progress = task.progress || 0;
+                const message = task.message || '处理中...';
+                updateProgressUI(progress, message);
+                
+                // 完成或失败处理
+                if (task.status === 'completed') {
+                    stopPollingAndReset(null);
+                    // 显示报告
+                    displayReport(task);
+                    analyzeBtn.disabled = false;
+                    analyzeBtn.innerHTML = '<i class="fas fa-play"></i> 开始分析';
+                } else if (task.status === 'failed') {
+                    stopPollingAndReset(task.message || '分析失败');
+                    analyzeBtn.disabled = false;
+                    analyzeBtn.innerHTML = '<i class="fas fa-play"></i> 开始分析';
+                }
+            } catch (err) {
+                console.error('轮询出错', err);
             }
+        }, 1500);
+    }
+
+    function updateProgressUI(percent, msg) {
+        const p = Math.min(100, Math.max(0, percent));
+        progressFill.style.width = `${p}%`;
+        progressPercentSpan.innerText = `${p}%`;
+        stepMsgSpan.innerHTML = msg;
+    }
+
+    function stopPollingAndReset(errorMsg = null) {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
         }
+        if (errorMsg) {
+            alert(errorMsg);
+            progressSection.style.display = 'none';
+        }
+    }
 
-        function showResult(data) {
-            document.getElementById('statusContainer').classList.add('hidden');
-            const resultContainer = document.getElementById('resultContainer');
-            resultContainer.classList.remove('hidden');
-
-            const reportDiv = document.getElementById('reportContent');
-            
-            // 渲染 Markdown
-            if (data.result) {
-                reportDiv.innerHTML = marked.parse(data.result);
-                // 激活代码高亮
-                document.querySelectorAll('pre code').forEach((block) => {
+    // 展示报告 (Markdown 渲染)
+    function displayReport(task) {
+        let rawResult = task.result;
+        let downloadUrl = task.download_url;
+        currentDownloadUrl = downloadUrl;
+        
+        if (!rawResult) {
+            reportContentDiv.innerHTML = '<div class="badge">⚠️ 未获取到报告内容</div>';
+            reportCard.style.display = 'block';
+            return;
+        }
+        
+        // 如果结果是对象，转为字符串（一般后端已经转成字符串）
+        let markdownText = (typeof rawResult === 'string') ? rawResult : JSON.stringify(rawResult, null, 2);
+        
+        // 使用 marked 渲染 markdown
+        try {
+            const html = marked.parse(markdownText);
+            reportContentDiv.innerHTML = html;
+            // 高亮代码块
+            if (typeof hljs !== 'undefined') {
+                document.querySelectorAll('#reportContent pre code').forEach((block) => {
                     hljs.highlightElement(block);
                 });
+            }
+        } catch(e) {
+            reportContentDiv.innerHTML = `<pre>${escapeHtml(markdownText)}</pre>`;
+        }
+        
+        reportCard.style.display = 'block';
+        // 下载按钮事件
+        downloadBtn.onclick = () => {
+            if (currentDownloadUrl) {
+                window.location.href = currentDownloadUrl;
             } else {
-                reportDiv.innerHTML = "<p class='text-gray-500'>报告内容为空，但任务状态显示已完成。</p>";
+                // 如果没有 download_url，尝试创建 blob 下载
+                const blob = new Blob([markdownText], { type: 'text/markdown' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `security_report_${currentTaskId || 'default'}.md`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
             }
+        };
+    }
 
-            // ✅ 生成下载按钮
-            const actionDiv = document.getElementById('actionButtons');
-            actionDiv.innerHTML = ''; // 清空旧按钮
+    function escapeHtml(str) {
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
 
-            if (data.download_url) {
-                const downloadLink = document.createElement('a');
-                downloadLink.href = data.download_url;
-                downloadLink.className = "inline-flex items-center bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition duration-200 shadow";
-                downloadLink.target = "_blank"; // 在新标签页打开或直接下载
-                downloadLink.innerHTML = `
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    下载报告 (.md)
-                `;
-                actionDiv.appendChild(downloadLink);
-            }
-            
-            // 滚动到结果区
-            resultContainer.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        function showError(msg) {
-            document.getElementById('statusContainer').classList.add('hidden');
-            const errorContainer = document.getElementById('errorContainer');
-            errorContainer.classList.remove('hidden');
-            document.getElementById('errorMessage').textContent = msg;
-            errorContainer.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        function resetUI() {
-            document.getElementById('resultContainer').classList.add('hidden');
-            document.getElementById('errorContainer').classList.add('hidden');
-            document.getElementById('reportContent').innerHTML = '';
-            document.getElementById('actionButtons').innerHTML = '';
-            updateProgress(0, "准备启动...");
-        }
-
-        function resetButtonState() {
-            const btn = document.getElementById('analyzeBtn');
-            btn.disabled = false;
-            btn.classList.remove('opacity-50', 'cursor-not-allowed');
-        }
-    </script>
+    // 清空结果
+    clearBtn.addEventListener('click', () => {
+        if (pollingInterval) clearInterval(pollingInterval);
+        resetReport();
+        selectedFile = null;
+        fileNameSpan.innerHTML = '';
+        fileInput.value = '';
+        analyzeBtn.disabled = false;
+        analyzeBtn.innerHTML = '<i class="fas fa-play"></i> 开始分析';
+        progressSection.style.display = 'none';
+        reportCard.style.display = 'none';
+    });
+</script>
 </body>
 </html>
