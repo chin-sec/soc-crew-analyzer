@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+gunicorn
+python-dotenv
+pydantic
+tenacity
+httpx
+openai
+crewai
+chromadb
+dashscope
+python-whois
+requests
+python-multipart
+python-dateutil

@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>SOC 安全分析平台 | 智能日志分析系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #1a1a2e;
+        }
+
+        /* 背景装饰 */
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* 头部 */
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            animation: fadeInDown 0.8s ease;
+        }
+
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #fff 0%, #e0e0e0 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 0.5rem;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            color: rgba(255,255,255,0.9);
+            font-size: 1rem;
+        }
+
+        /* 卡片样式 */
+        .card {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            margin-bottom: 2rem;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            animation: fadeInUp 0.6s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 30px 70px rgba(0,0,0,0.4);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .card-icon {
+            font-size: 2rem;
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .card-desc {
+            color: #666;
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+
+        /* 上传区域 */
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 16px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f5f5ff;
+        }
+
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #e8ebff;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .upload-text {
+            color: #666;
+            margin-bottom: 1rem;
+        }
+
+        .file-info {
+            background: #f0f0f0;
+            border-radius: 12px;
+            padding: 1rem;
+            margin-top: 1rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        /* 按钮 */
+        .btn-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 0.75rem 2rem;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #666;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #e0e0e0;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* 进度条 */
+        .progress-container {
+            margin-top: 1rem;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+            animation: shimmer 1s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        .status-text {
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+            color: #666;
+            text-align: center;
+        }
+
+        /* 结果展示区域 */
+        .result-section {
+            display: none;
+        }
+
+        .result-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 1rem;
+            font-weight: 500;
+            color: #666;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .tab:hover {
+            color: #667eea;
+        }
+
+        .tab.active {
+            color: #667eea;
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* JSON 美化显示 */
+        .json-viewer {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 1rem;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+            padding: 1rem;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+
+        /* 事件列表 */
+        .events-list {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .event-item {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .event-item:hover {
+            background: #f0f0ff;
+            transform: translateX(5px);
+        }
+
+        .event-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .event-type {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .event-confidence {
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .confidence-high {
+            background: #fee;
+            color: #e74c3c;
+        }
+
+        .confidence-medium {
+            background: #ffeaa7;
+            color: #f39c12;
+        }
+
+        .confidence-low {
+            background: #d5f4e6;
+            color: #27ae60;
+        }
+
+        .event-detail {
+            font-size: 0.875rem;
+            color: #666;
+            margin-top: 0.5rem;
+        }
+
+        .event-mitre {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #667eea;
+            margin-top: 0.5rem;
+        }
+
+        /* 提示消息 */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: #333;
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            z-index: 1000;
+            animation: slideInRight 0.3s ease;
+        }
+
+        .toast.success {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+        }
+
+        .toast.error {
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+        }
+
+        /* 动画 */
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            h1 {
+                font-size: 1.5rem;
+            }
+            
+            .card {
+                padding: 1rem;
+            }
+            
+            .btn {
+                padding: 0.5rem 1rem;
+                font-size: 0.875rem;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <div class="logo">🛡️</div>
+            <h1>SOC 安全分析平台</h1>
+            <div class="subtitle">基于AI的智能日志分析系统 | 三层漏斗架构 | MITRE ATT&CK 映射</div>
+        </div>
+
+        <!-- 上传卡片 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon">📁</div>
+                <div>
+                    <div class="card-title">日志文件上传</div>
+                    <div class="card-desc">支持常见日志格式，最大 200MB</div>
+                </div>
+            </div>
+            
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📤</div>
+                <div class="upload-text">点击或拖拽文件到此区域上传</div>
+                <div class="file-info" id="fileInfo" style="display: none;">
+                    <span>📄</span>
+                    <span id="fileName"></span>
+                    <span id="fileSize"></span>
+                </div>
+                <input type="file" id="fileInput" accept=".log,.txt,.json" style="display: none;">
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn btn-primary" id="analyzeBtn" disabled>
+                    🔍 三层漏斗分析
+                </button>
+                <button class="btn btn-secondary" id="fullPipelineBtn" disabled>
+                    🤖 完整Agent编排
+                </button>
+            </div>
+            
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="status-text" id="statusText">准备就绪...</div>
+            </div>
+        </div>
+
+        <!-- 结果展示卡片 -->
+        <div class="card result-section" id="resultSection">
+            <div class="card-header">
+                <div class="card-icon">📊</div>
+                <div>
+                    <div class="card-title">分析结果</div>
+                    <div class="card-desc">详细的安全事件分析和威胁情报</div>
+                </div>
+            </div>
+            
+            <div class="result-tabs">
+                <button class="tab active" data-tab="summary">📈 概览统计</button>
+                <button class="tab" data-tab="events">🎯 安全事件</button>
+                <button class="tab" data-tab="json">📄 JSON原始数据</button>
+            </div>
+            
+            <!-- 概览标签页 -->
+            <div class="tab-content active" id="summaryTab">
+                <div class="stats-grid" id="statsGrid"></div>
+                <div id="summaryText"></div>
+            </div>
+            
+            <!-- 事件标签页 -->
+            <div class="tab-content" id="eventsTab">
+                <div class="events-list" id="eventsList"></div>
+            </div>
+            
+            <!-- JSON标签页 -->
+            <div class="tab-content" id="jsonTab">
+                <div class="json-viewer" id="jsonViewer"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTaskId = null;
+        let pollingInterval = null;
+        let selectedFile = null;
+        
+        // DOM 元素
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const fullPipelineBtn = document.getElementById('fullPipelineBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const statusText = document.getElementById('statusText');
+        const resultSection = document.getElementById('resultSection');
+        
+        // 显示提示消息
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span>${type === 'success' ? '✅' : '❌'}</span>
+                    <span>${message}</span>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.remove();
+            }, 3000);
+        }
+        
+        // 更新进度
+        function updateProgress(percent, status) {
+            progressFill.style.width = `${percent}%`;
+            statusText.textContent = status;
+        }
+        
+        // 停止轮询
+        function stopPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+        
+        // 轮询任务状态
+        async function pollTaskStatus(taskId, isFullPipeline = false) {
+            try {
+                const response = await fetch(`/tasks/${taskId}`);
+                const data = await response.json();
+                
+                if (data.status === 'completed') {
+                    stopPolling();
+                    updateProgress(100, '分析完成！');
+                    displayResults(data.result);
+                    showToast('分析完成，已生成安全报告', 'success');
+                    analyzeBtn.disabled = false;
+                    fullPipelineBtn.disabled = false;
+                } else if (data.status === 'failed') {
+                    stopPolling();
+                    updateProgress(0, '分析失败');
+                    showToast(`分析失败: ${data.error?.detail || '未知错误'}`, 'error');
+                    analyzeBtn.disabled = false;
+                    fullPipelineBtn.disabled = false;
+                } else if (data.status === 'running') {
+                    updateProgress(50, '正在分析日志...');
+                }
+            } catch (error) {
+                console.error('轮询任务状态失败:', error);
+            }
+        }
+        
+        // 显示分析结果
+        function displayResults(result) {
+            resultSection.style.display = 'block';
+            
+            // 更新统计卡片
+            const statsGrid = document.getElementById('statsGrid');
+            const threatEvents = result.events?.filter(e => e.is_threat && !e.error) || [];
+            const totalIocs = result.events?.reduce((sum, e) => sum + (e.iocs?.length || 0), 0) || 0;
+            
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${result.suspicious_chunks || 0}</div>
+                    <div class="stat-label">可疑分块</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${result.clustered_events || 0}</div>
+                    <div class="stat-label">聚类事件</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${threatEvents.length}</div>
+                    <div class="stat-label">安全威胁</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${totalIocs}</div>
+                    <div class="stat-label">IOC指标</div>
+                </div>
+            `;
+            
+            // 更新摘要文本
+            const summaryText = document.getElementById('summaryText');
+            summaryText.innerHTML = `
+                <div style="background: #f0f0ff; padding: 1rem; border-radius: 12px; margin-top: 1rem;">
+                    <h3 style="margin-bottom: 0.5rem; color: #667eea;">📋 分析摘要</h3>
+                    <p>${result.summary || '未发现安全威胁'}</p>
+                    <p style="margin-top: 0.5rem; font-size: 0.875rem; color: #666;">
+                        处理分块: ${result.total_chunks_processed || 0} | 
+                        可疑分块: ${result.suspicious_chunks || 0} | 
+                        聚类事件: ${result.clustered_events || 0}
+                    </p>
+                </div>
+            `;
+            
+            // 更新事件列表
+            const eventsList = document.getElementById('eventsList');
+            if (threatEvents.length === 0) {
+                eventsList.innerHTML = `
+                    <div style="text-align: center; padding: 3rem; color: #999;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
+                        <div>未发现安全威胁</div>
+                    </div>
+                `;
+            } else {
+                eventsList.innerHTML = threatEvents.map((event, index) => {
+                    const confidence = event.confidence || 0;
+                    let confidenceClass = 'confidence-low';
+                    let confidenceText = '低风险';
+                    if (confidence >= 0.7) {
+                        confidenceClass = 'confidence-high';
+                        confidenceText = '高风险';
+                    } else if (confidence >= 0.4) {
+                        confidenceClass = 'confidence-medium';
+                        confidenceText = '中风险';
+                    }
+                    
+                    return `
+                        <div class="event-item" onclick="toggleEventDetail(${index})">
+                            <div class="event-header">
+                                <span class="event-type">${event.attack_type || '未知攻击'}</span>
+                                <span class="event-confidence ${confidenceClass}">${confidenceText}</span>
+                            </div>
+                            <div class="event-detail">
+                                <strong>证据:</strong> ${event.evidence || '无详细证据'}
+                            </div>
+                            <div class="event-mitre">
+                                🎯 MITRE: ${event.mitre_id || 'unmapped'} | ${event.tactic || '未知阶段'} | ${event.technique_name || '未知技术'}
+                            </div>
+                            <div id="eventDetail-${index}" style="display: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e0e0e0;">
+                                <div><strong>处置建议:</strong> ${event.recommendation || '无建议'}</div>
+                                <div style="margin-top: 0.5rem;"><strong>IOC指标:</strong></div>
+                                <div style="font-family: monospace; font-size: 0.75rem; margin-top: 0.25rem;">
+                                    ${event.iocs?.map(ioc => `${ioc.type}: ${ioc.value}`).join('<br>') || '无IOC'}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+            
+            // 更新JSON查看器
+            const jsonViewer = document.getElementById('jsonViewer');
+            jsonViewer.textContent = JSON.stringify(result, null, 2);
+            
+            // 滚动到结果区域
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        
+        // 切换事件详情
+        window.toggleEventDetail = function(index) {
+            const detail = document.getElementById(`eventDetail-${index}`);
+            if (detail.style.display === 'none') {
+                detail.style.display = 'block';
+            } else {
+                detail.style.display = 'none';
+            }
+        };
+        
+        // 上传文件
+        async function uploadFile(file, isFullPipeline = false) {
+            if (!file) {
+                showToast('请先选择文件', 'error');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const endpoint = isFullPipeline ? '/full-pipeline' : '/analyze';
+            const actionName = isFullPipeline ? '完整Agent编排' : '三层漏斗分析';
+            
+            analyzeBtn.disabled = true;
+            fullPipelineBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            resultSection.style.display = 'none';
+            updateProgress(10, `正在上传文件并启动${actionName}...`);
+            
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '上传失败');
+                }
+                
+                const data = await response.json();
+                currentTaskId = data.task_id;
+                updateProgress(30, '任务已创建，开始分析...');
+                
+                stopPolling();
+                pollingInterval = setInterval(() => pollTaskStatus(currentTaskId, isFullPipeline), 2000);
+                
+            } catch (error) {
+                console.error('上传失败:', error);
+                showToast(`启动分析失败: ${error.message}`, 'error');
+                analyzeBtn.disabled = false;
+                fullPipelineBtn.disabled = false;
+                progressContainer.style.display = 'none';
+                updateProgress(0, '准备就绪');
+            }
+        }
+        
+        // 文件选择处理
+        function handleFileSelect(file) {
+            if (!file) return;
+            
+            const maxSize = 200 * 1024 * 1024;
+            if (file.size > maxSize) {
+                showToast('文件大小超过200MB限制', 'error');
+                return;
+            }
+            
+            selectedFile = file;
+            fileName.textContent = file.name;
+            fileSize.textContent = `(${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+            fileInfo.style.display = 'flex';
+            analyzeBtn.disabled = false;
+            fullPipelineBtn.disabled = false;
+            showToast(`已选择文件: ${file.name}`, 'success');
+        }
+        
+        // 事件监听
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelect(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelect(e.target.files[0]);
+            }
+        });
+        
+        analyzeBtn.addEventListener('click', () => {
+            if (selectedFile) {
+                uploadFile(selectedFile, false);
+            }
+        });
+        
+        fullPipelineBtn.addEventListener('click', () => {
+            if (selectedFile) {
+                uploadFile(selectedFile, true);
+            }
+        });
+        
+        // 标签页切换
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.dataset.tab;
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(`${tabName}Tab`).classList.add('active');
+            });
+        });
+        
+        // 页面加载完成提示
+        showToast('平台已就绪，请上传日志文件', 'success');
+    </script>
+</body>
+</html>

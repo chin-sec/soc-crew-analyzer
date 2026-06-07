@@ -1,0 +1,10 @@
+services:
+  soc-backend:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/knowledge_base:/app/data/knowledge_base
+    env_file:
+      - .env
+    restart: unless-stopped
